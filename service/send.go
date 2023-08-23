@@ -93,7 +93,7 @@ var SendCmd = &cli.Command{
 		if err != nil {
 			return lcli.ShowHelp(cctx, fmt.Errorf("failed to parse target address: %w", err))
 		}
-
+		log.Info(params.To)
 		val, err := types.ParseFIL(cctx.Args().Get(1))
 		if err != nil {
 			return lcli.ShowHelp(cctx, fmt.Errorf("failed to parse amount: %w", err))

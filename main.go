@@ -3,11 +3,14 @@ package main
 import (
 	lcli "github.com/filecoin-project/lotus/cli"
 	cliutil "github.com/filecoin-project/lotus/cli/util"
+	logging "github.com/ipfs/go-log/v2"
 	ucli "github.com/urfave/cli/v2"
 	"lotus-tools/service"
 )
 
 func main() {
+
+	logging.SetLogLevel("*", "INFO")
 	app := &ucli.App{
 		Name:                 "lotus-tools",
 		Usage:                "lotus-tools",
