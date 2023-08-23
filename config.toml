@@ -1,2 +1,3 @@
 [Repo]
 tool_path = "~/.wallet-tools"
+full_node_api = ""

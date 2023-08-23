@@ -6,10 +6,11 @@ import (
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/api/client"
 	cliutil "github.com/filecoin-project/lotus/cli/util"
+	"lotus-tools/conf"
 )
 
 func GetFullNodeApi(ctx context.Context) (api.FullNode, jsonrpc.ClientCloser, error) {
-	ainfo := cliutil.ParseApiInfo("")
+	ainfo := cliutil.ParseApiInfo(conf.GetConfig().Repo.FullNodeApi)
 	addr, err := ainfo.DialArgs("v1")
 	if err != nil {
 		return nil, nil, err

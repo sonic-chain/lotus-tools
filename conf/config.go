@@ -16,7 +16,8 @@ type Config struct {
 }
 
 type Repo struct {
-	ToolPath string
+	ToolPath    string `toml:"tool_path"`
+	FullNodeApi string `toml:"full_node_api"`
 }
 
 func initConfig() error {
