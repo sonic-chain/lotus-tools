@@ -1,7 +1,6 @@
 package main
 
 import (
-	"github.com/filecoin-project/lotus/build"
 	lcli "github.com/filecoin-project/lotus/cli"
 	cliutil "github.com/filecoin-project/lotus/cli/util"
 	ucli "github.com/urfave/cli/v2"
@@ -12,7 +11,7 @@ func main() {
 	app := &ucli.App{
 		Name:                 "lotus-tools",
 		Usage:                "lotus-tools",
-		Version:              build.UserVersion(),
+		Version:              "v1.0",
 		EnableBashCompletion: true,
 		Flags: []ucli.Flag{
 			&ucli.StringFlag{

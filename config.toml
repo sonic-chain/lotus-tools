@@ -1,3 +1,3 @@
 [Repo]
-tool_path = "~/.wallet-tools"
-full_node_api = ""
+tool_path = "/Users/sonic/.wallet-tools"
+full_node_api = "https://api.calibration.node.glif.io"

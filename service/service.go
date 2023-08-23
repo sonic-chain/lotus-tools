@@ -72,6 +72,7 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 		return nil, err
 	}
 
+	log.Info(act.Code)
 	methodMeta, found := consensus.NewActorRegistry().Methods[act.Code][method] // TODO: use remote map
 	if !found {
 		return nil, fmt.Errorf("method %d not found on actor %s", method, act.Code)
