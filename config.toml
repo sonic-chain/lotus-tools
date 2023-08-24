@@ -1,3 +1,6 @@
 [Repo]
 tool_path = "/Users/sonic/.wallet-tools"
 full_node_api = "https://api.calibration.node.glif.io"
+
+[actor]
+ cids= ["bafk2bzacebkjnjp5okqjhjxzft5qkuv36u4tz7inawseiwi2kw4j43xpxvhpm"]

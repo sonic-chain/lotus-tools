@@ -12,7 +12,12 @@ import (
 var config *Config
 
 type Config struct {
-	Repo Repo
+	Repo  Repo
+	Actor Actor
+}
+
+type Actor struct {
+	Cids []string `json:"cids"`
 }
 
 type Repo struct {

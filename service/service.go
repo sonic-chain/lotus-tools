@@ -15,6 +15,8 @@ import (
 	"github.com/filecoin-project/go-state-types/builtin/v11/miner"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
+	"github.com/filecoin-project/lotus/chain/consensus/filcns"
+	"github.com/filecoin-project/lotus/chain/messagesigner"
 	"github.com/filecoin-project/lotus/chain/types"
 	"github.com/filecoin-project/lotus/chain/vm"
 	lcli "github.com/filecoin-project/lotus/cli"
@@ -25,8 +27,8 @@ import (
 	cbg "github.com/whyrusleeping/cbor-gen"
 	"golang.org/x/xerrors"
 	"io"
+	"lotus-tools/conf"
 	"reflect"
-	"runtime"
 	"strings"
 )
 
@@ -68,20 +70,6 @@ func (s *LotusService) Close() error {
 	return nil
 }
 
-func makeMethodMeta(method interface{}) builtin.MethodMeta {
-	ev := reflect.ValueOf(method)
-	// Extract the method names using reflection. These
-	// method names always match the field names in the
-	// `builtin.Method*` structs (tested in the specs-actors
-	// tests).
-	fnName := runtime.FuncForPC(ev.Pointer()).Name()
-	fnName = strings.TrimSuffix(fnName[strings.LastIndexByte(fnName, '.')+1:], "-fm")
-	return builtin.MethodMeta{
-		Name:   fnName,
-		Method: method,
-	}
-}
-
 func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address.Address, method abi.MethodNum, paramstr string) ([]byte, error) {
 	act, err := s.api.StateGetActor(ctx, to, types.EmptyTSK)
 	if err != nil {
@@ -89,40 +77,36 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 	}
 
 	log.Info(act)
-	//for k, v := range filcns.NewActorRegistry().Methods {
+
+	methods := filcns.NewActorRegistry().Methods
+
+	for _, cidStr := range conf.GetConfig().Actor.Cids {
+		localCid := cid.MustParse(cidStr)
+		var exports = map[abi.MethodNum]builtin.MethodMeta{
+			16: {"WithdrawBalance", *new(func(*miner.WithdrawBalanceParams) *abi.TokenAmount)}, // WithdrawBalance
+			23: {"ChangeOwnerAddress", *new(func(*address.Address) *abi.EmptyValue)},           // ChangeOwnerAddress
+		}
+
+		mm := map[abi.MethodNum]vm.MethodMeta{}
+		for number, export := range exports {
+			ev := reflect.ValueOf(export.Method)
+			et := ev.Type()
+
+			mm[number] = vm.MethodMeta{
+				Name:   export.Name,
+				Ret:    et.Out(0),
+				Params: et.In(0),
+			}
+		}
+		methods[localCid] = mm
+	}
+
+	//for k, v := range methods {
 	//	fmt.Println(k)
 	//	for k1, v1 := range v {
 	//		fmt.Println(k1, " ", v1)
 	//	}
-	//
 	//}
-
-	methods := map[cid.Cid]map[abi.MethodNum]vm.MethodMeta{}
-	localCid := cid.MustParse("bafk2bzacebkjnjp5okqjhjxzft5qkuv36u4tz7inawseiwi2kw4j43xpxvhpm")
-	var exports = map[abi.MethodNum]builtin.MethodMeta{
-		16: {"WithdrawBalance", *new(func(*miner.WithdrawBalanceParams) *abi.TokenAmount)}, // WithdrawBalance
-		23: {"ChangeOwnerAddress", *new(func(*address.Address) *abi.EmptyValue)},           // ChangeOwnerAddress
-	}
-
-	mm := map[abi.MethodNum]vm.MethodMeta{}
-	for number, export := range exports {
-		ev := reflect.ValueOf(export.Method)
-		et := ev.Type()
-
-		mm[number] = vm.MethodMeta{
-			Name:   export.Name,
-			Ret:    et.Out(0),
-			Params: et.In(0),
-		}
-	}
-	methods[localCid] = mm
-
-	for k, v := range methods {
-		fmt.Println(k)
-		for k1, v1 := range v {
-			fmt.Println(k1, " ", v1)
-		}
-	}
 
 	methodMeta, found := methods[act.Code][method] // TODO: use remote map
 	if !found {
@@ -231,13 +215,16 @@ func (s *LotusService) PublishMessage(ctx context.Context,
 	}
 
 	if prototype.ValidNonce {
-		sm, err := s.api.WalletSignMessage(ctx, prototype.Message.From, &prototype.Message)
+
+		sm, err := s.WalletSignMessage(ctx, prototype.Message.From, &prototype.Message)
 		if err != nil {
+			log.Errorf("WalletSignMessage failed, error: %+v", err)
 			return nil, nil, err
 		}
 
 		_, err = s.api.MpoolPush(ctx, sm)
 		if err != nil {
+			log.Errorf("MpoolPush failed, error: %+v", err)
 			return nil, nil, err
 		}
 		return sm, nil, nil
@@ -245,10 +232,39 @@ func (s *LotusService) PublishMessage(ctx context.Context,
 
 	sm, err := s.api.MpoolPushMessage(ctx, &prototype.Message, nil)
 	if err != nil {
+		log.Errorf("MpoolPushMessage failed, error: %+v", err)
 		return nil, nil, err
 	}
 
 	return sm, nil, nil
+}
+
+func (s *LotusService) WalletSignMessage(ctx context.Context, addr address.Address, msg *types.Message) (*types.SignedMessage, error) {
+	if addr.Protocol() == address.BLS || addr.Protocol() == address.SECP256K1 || addr.Protocol() == address.Delegated {
+		sb, err := messagesigner.SigningBytes(msg, addr.Protocol())
+		if err != nil {
+			return nil, err
+		}
+		mb, err := msg.ToStorageBlock()
+		if err != nil {
+			return nil, xerrors.Errorf("serializing message: %w", err)
+		}
+
+		sig, err := s.wallet.WalletSign(ctx, addr, sb, api.MsgMeta{
+			Type:  api.MTChainMsg,
+			Extra: mb.RawData(),
+		})
+		if err != nil {
+			return nil, xerrors.Errorf("failed to sign message: %w", err)
+		}
+
+		return &types.SignedMessage{
+			Message:   *msg,
+			Signature: *sig,
+		}, nil
+	} else {
+		return nil, errors.New("unknown address protocol")
+	}
 }
 
 func InteractiveSend(ctx context.Context, cctx *cli.Context, srv *LotusService,
