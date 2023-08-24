@@ -13,8 +13,7 @@ import (
 	"github.com/filecoin-project/go-state-types/big"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
-	"github.com/filecoin-project/lotus/chain/consensus"
-	"github.com/filecoin-project/lotus/chain/messagesigner"
+	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	"github.com/filecoin-project/lotus/chain/types"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/gdamore/tcell/v2"
@@ -71,9 +70,17 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 	if err != nil {
 		return nil, err
 	}
+
 	log.Info(act)
-	log.Info(act.Code)
-	methodMeta, found := consensus.NewActorRegistry().Methods[act.Code][method] // TODO: use remote map
+	for k, v := range filcns.NewActorRegistry().Methods {
+		fmt.Println(k)
+		for k1, v1 := range v {
+			fmt.Println(k1, " ", v1)
+		}
+
+	}
+
+	methodMeta, found := filcns.NewActorRegistry().Methods[act.Code][method] // TODO: use remote map
 	if !found {
 		return nil, fmt.Errorf("method %d not found on actor %s", method, act.Code)
 	}
@@ -137,52 +144,7 @@ func (s *LotusService) MessageForSend(ctx context.Context, params lcli.SendParam
 	return prototype, nil
 }
 
-func (s *LotusService) PublishMessage(ctx context.Context,
-	prototype *api.MessagePrototype, force bool) (*types.SignedMessage, [][]api.MessageCheckStatus, error) {
-
-	gasedMsg, err := s.api.GasEstimateMessageGas(ctx, &prototype.Message, nil, types.EmptyTSK)
-	if err != nil {
-		return nil, nil, xerrors.Errorf("estimating gas: %w", err)
-	}
-	prototype.Message = *gasedMsg
-
-	if !force {
-		checks, err := s.RunChecksForPrototype(ctx, prototype)
-		if err != nil {
-			return nil, nil, xerrors.Errorf("running checks: %w", err)
-		}
-		for _, chks := range checks {
-			for _, c := range chks {
-				if !c.OK {
-					return nil, checks, lcli.ErrCheckFailed
-				}
-			}
-		}
-	}
-
-	if prototype.ValidNonce {
-		sm, err := s.WalletSignMessage(ctx, prototype.Message.From, &prototype.Message)
-		if err != nil {
-			log.Errorf("WalletSignMessage failed, error: %+v", err)
-			return nil, nil, err
-		}
-
-		_, err = s.api.MpoolPush(ctx, sm)
-		if err != nil {
-			log.Errorf("MpoolPush failed, error: %+v", err)
-			return nil, nil, err
-		}
-		return sm, nil, nil
-	}
-
-	sm, err := s.api.MpoolPushMessage(ctx, &prototype.Message, nil)
-	if err != nil {
-		log.Errorf("MpoolPushMessage failed, error: %+v", err)
-		return nil, nil, err
-	}
-
-	return sm, nil, nil
-}
+var ErrCheckFailed = fmt.Errorf("check has failed")
 
 func (s *LotusService) RunChecksForPrototype(ctx context.Context, prototype *api.MessagePrototype) ([][]api.MessageCheckStatus, error) {
 	var outChecks [][]api.MessageCheckStatus
@@ -201,43 +163,61 @@ func (s *LotusService) RunChecksForPrototype(ctx context.Context, prototype *api
 	return outChecks, nil
 }
 
-func (s *LotusService) WalletSignMessage(ctx context.Context, addr address.Address, msg *types.Message) (*types.SignedMessage, error) {
-	if addr.Protocol() == address.BLS || addr.Protocol() == address.SECP256K1 || addr.Protocol() == address.Delegated {
-		sb, err := messagesigner.SigningBytes(msg, addr.Protocol())
-		if err != nil {
-			return nil, err
-		}
-		mb, err := msg.ToStorageBlock()
-		if err != nil {
-			return nil, xerrors.Errorf("serializing message: %w", err)
-		}
+func (s *LotusService) PublishMessage(ctx context.Context,
+	prototype *api.MessagePrototype, force bool) (*types.SignedMessage, [][]api.MessageCheckStatus, error) {
 
-		sig, err := s.wallet.WalletSign(ctx, addr, sb, api.MsgMeta{
-			Type:  api.MTChainMsg,
-			Extra: mb.RawData(),
-		})
-		if err != nil {
-			return nil, xerrors.Errorf("failed to sign message: %w", err)
-		}
-
-		return &types.SignedMessage{
-			Message:   *msg,
-			Signature: *sig,
-		}, nil
-	} else {
-		return nil, errors.New("unknown address protocol")
+	gasedMsg, err := s.api.GasEstimateMessageGas(ctx, &prototype.Message, nil, types.EmptyTSK)
+	if err != nil {
+		return nil, nil, xerrors.Errorf("estimating gas: %w", err)
 	}
+	prototype.Message = *gasedMsg
+
+	if !force {
+		checks, err := s.RunChecksForPrototype(ctx, prototype)
+		if err != nil {
+			return nil, nil, xerrors.Errorf("running checks: %w", err)
+		}
+		for _, chks := range checks {
+			for _, c := range chks {
+				if !c.OK {
+					return nil, checks, ErrCheckFailed
+				}
+			}
+		}
+	}
+
+	if prototype.ValidNonce {
+		sm, err := s.api.WalletSignMessage(ctx, prototype.Message.From, &prototype.Message)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		_, err = s.api.MpoolPush(ctx, sm)
+		if err != nil {
+			return nil, nil, err
+		}
+		return sm, nil, nil
+	}
+
+	sm, err := s.api.MpoolPushMessage(ctx, &prototype.Message, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return sm, nil, nil
 }
 
-func InteractiveSend(ctx context.Context, cctx *cli.Context, srv *LotusService, proto *api.MessagePrototype) (*types.SignedMessage, error) {
+func InteractiveSend(ctx context.Context, cctx *cli.Context, srv *LotusService,
+	proto *api.MessagePrototype) (*types.SignedMessage, error) {
+
 	msg, checks, err := srv.PublishMessage(ctx, proto, cctx.Bool("force") || cctx.Bool("force-send"))
 	printer := cctx.App.Writer
-	if xerrors.Is(err, lcli.ErrCheckFailed) {
+	if xerrors.Is(err, ErrCheckFailed) {
 		if !cctx.Bool("interactive") {
 			fmt.Fprintf(printer, "Following checks have failed:\n")
 			printChecks(printer, checks, proto.Message.Cid())
 		} else {
-			proto, err = resolveChecks(ctx, srv, cctx.App.Writer, proto, checks)
+			proto, err = resolveChecks(ctx, *srv, cctx.App.Writer, proto, checks)
 			if err != nil {
 				return nil, xerrors.Errorf("from UI: %w", err)
 			}
@@ -252,7 +232,25 @@ func InteractiveSend(ctx context.Context, cctx *cli.Context, srv *LotusService, 
 	return msg, nil
 }
 
-func resolveChecks(ctx context.Context, s *LotusService, printer io.Writer,
+func printChecks(printer io.Writer, checkGroups [][]api.MessageCheckStatus, protoCid cid.Cid) {
+	for _, checks := range checkGroups {
+		for _, c := range checks {
+			if c.OK {
+				continue
+			}
+			aboutProto := c.Cid.Equals(protoCid)
+			msgName := "current"
+			if !aboutProto {
+				msgName = c.Cid.String()
+			}
+			fmt.Fprintf(printer, "%s message failed a check %s: %s\n", msgName, c.Code, c.Err)
+		}
+	}
+}
+
+var ErrAbortedByUser = errors.New("aborted by user")
+
+func resolveChecks(ctx context.Context, s LotusService, printer io.Writer,
 	proto *api.MessagePrototype, checkGroups [][]api.MessageCheckStatus,
 ) (*api.MessagePrototype, error) {
 
@@ -282,35 +280,6 @@ func resolveChecks(ctx context.Context, s *LotusService, printer io.Writer,
 	return proto, nil
 }
 
-var ErrAbortedByUser = errors.New("aborted by user")
-
-func printChecks(printer io.Writer, checkGroups [][]api.MessageCheckStatus, protoCid cid.Cid) {
-	for _, checks := range checkGroups {
-		for _, c := range checks {
-			if c.OK {
-				continue
-			}
-			aboutProto := c.Cid.Equals(protoCid)
-			msgName := "current"
-			if !aboutProto {
-				msgName = c.Cid.String()
-			}
-			fmt.Fprintf(printer, "%s message failed a check %s: %s\n", msgName, c.Code, c.Err)
-		}
-	}
-}
-
-func askUser(printer io.Writer, q string, def bool) bool {
-	var resp string
-	fmt.Fprint(printer, q)
-	fmt.Scanln(&resp)
-	resp = strings.ToLower(resp)
-	if len(resp) == 0 {
-		return def
-	}
-	return resp[0] == 'y'
-}
-
 func isFeeCapProblem(checkGroups [][]api.MessageCheckStatus, protoCid cid.Cid) (bool, big.Int) {
 	baseFee := big.Zero()
 	yes := false
@@ -336,29 +305,15 @@ func isFeeCapProblem(checkGroups [][]api.MessageCheckStatus, protoCid cid.Cid) (
 	return yes, baseFee
 }
 
-var interactiveSolves = map[api.CheckStatusCode]bool{
-	api.CheckStatusMessageMinBaseFee:        true,
-	api.CheckStatusMessageBaseFee:           true,
-	api.CheckStatusMessageBaseFeeLowerBound: true,
-	api.CheckStatusMessageBaseFeeUpperBound: true,
-}
-
-func baseFeeFromHints(hint map[string]interface{}) big.Int {
-	bHint, ok := hint["baseFee"]
-	if !ok {
-		return big.Zero()
+func askUser(printer io.Writer, q string, def bool) bool {
+	var resp string
+	fmt.Fprint(printer, q)
+	fmt.Scanln(&resp)
+	resp = strings.ToLower(resp)
+	if len(resp) == 0 {
+		return def
 	}
-	bHintS, ok := bHint.(string)
-	if !ok {
-		return big.Zero()
-	}
-
-	var err error
-	baseFee, err := big.FromString(bHintS)
-	if err != nil {
-		return big.Zero()
-	}
-	return baseFee
+	return resp[0] == 'y'
 }
 
 func runFeeCapAdjustmentUI(proto *api.MessagePrototype, baseFee abi.TokenAmount) (*api.MessagePrototype, error) {
@@ -469,4 +424,29 @@ func feeUI(baseFee abi.TokenAmount, gasLimit int64, maxFee *abi.TokenAmount, sen
 
 		return nil
 	}
+}
+
+var interactiveSolves = map[api.CheckStatusCode]bool{
+	api.CheckStatusMessageMinBaseFee:        true,
+	api.CheckStatusMessageBaseFee:           true,
+	api.CheckStatusMessageBaseFeeLowerBound: true,
+	api.CheckStatusMessageBaseFeeUpperBound: true,
+}
+
+func baseFeeFromHints(hint map[string]interface{}) big.Int {
+	bHint, ok := hint["baseFee"]
+	if !ok {
+		return big.Zero()
+	}
+	bHintS, ok := bHint.(string)
+	if !ok {
+		return big.Zero()
+	}
+
+	var err error
+	baseFee, err := big.FromString(bHintS)
+	if err != nil {
+		return big.Zero()
+	}
+	return baseFee
 }
