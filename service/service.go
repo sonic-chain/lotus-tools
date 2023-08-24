@@ -104,18 +104,18 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 		23: {"ChangeOwnerAddress", *new(func(*address.Address) *abi.EmptyValue)},           // ChangeOwnerAddress
 	}
 
+	mm := map[abi.MethodNum]vm.MethodMeta{}
 	for number, export := range exports {
 		ev := reflect.ValueOf(export.Method)
 		et := ev.Type()
 
-		methods[localCid] = map[abi.MethodNum]vm.MethodMeta{
-			number: {
-				Name:   export.Name,
-				Ret:    et.Out(0),
-				Params: et.In(0),
-			},
+		mm[number] = vm.MethodMeta{
+			Name:   export.Name,
+			Ret:    et.Out(0),
+			Params: et.In(0),
 		}
 	}
+	methods[localCid] = mm
 
 	for k, v := range methods {
 		fmt.Println(k)
