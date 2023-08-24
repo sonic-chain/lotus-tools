@@ -88,7 +88,7 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 		return nil, err
 	}
 
-	//log.Info(act)
+	log.Info(act)
 	//for k, v := range filcns.NewActorRegistry().Methods {
 	//	fmt.Println(k)
 	//	for k1, v1 := range v {
@@ -114,6 +114,13 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 				Ret:    et.Out(0),
 				Params: et.In(0),
 			},
+		}
+	}
+
+	for k, v := range methods {
+		fmt.Println(k)
+		for k1, v1 := range v {
+			fmt.Println(k1, " ", v1)
 		}
 	}
 
