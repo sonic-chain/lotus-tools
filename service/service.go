@@ -11,10 +11,12 @@ import (
 	"github.com/filecoin-project/go-jsonrpc"
 	"github.com/filecoin-project/go-state-types/abi"
 	"github.com/filecoin-project/go-state-types/big"
+	"github.com/filecoin-project/go-state-types/builtin/v11/miner"
 	"github.com/filecoin-project/lotus/api"
 	"github.com/filecoin-project/lotus/build"
 	"github.com/filecoin-project/lotus/chain/consensus/filcns"
 	"github.com/filecoin-project/lotus/chain/types"
+	"github.com/filecoin-project/lotus/chain/vm"
 	lcli "github.com/filecoin-project/lotus/cli"
 	"github.com/gdamore/tcell/v2"
 	"github.com/ipfs/go-cid"
@@ -80,7 +82,23 @@ func (s *LotusService) DecodeTypedParamsFromJSON(ctx context.Context, to address
 
 	}
 
-	methodMeta, found := filcns.NewActorRegistry().Methods[act.Code][method] // TODO: use remote map
+	methods := map[cid.Cid]map[abi.MethodNum]vm.MethodMeta{}
+
+	cid := cid.MustParse("bafk2bzacebkjnjp5okqjhjxzft5qkuv36u4tz7inawseiwi2kw4j43xpxvhpm")
+
+	ev := reflect.ValueOf(miner.WithdrawBalanceParams{})
+	et := ev.Type()
+
+	methods[cid] = map[abi.MethodNum]vm.MethodMeta{
+		abi.MethodNum(16): {
+			Name:   "WithdrawBalance",
+			Params: et.In(0),
+			Ret:    et.Out(0),
+		},
+		abi.MethodNum(23): vm.MethodMeta{},
+	}
+
+	methodMeta, found := methods[act.Code][method] // TODO: use remote map
 	if !found {
 		return nil, fmt.Errorf("method %d not found on actor %s", method, act.Code)
 	}
